@@ -1,0 +1,7 @@
+pyTelegramBotAPI
+pandas
+numpy
+flask
+gspread
+gspread_dataframe
+plotly
