@@ -8,7 +8,7 @@ import datetime as dt
 import numpy as np
 from background import keep_alive
 import logging
-import html
+from lxml import html
 
 logging.basicConfig(level=logging.INFO)
 TOKEN = '5966527940:AAF1n1_Yw1p3bLjAvEFvNVdPquTWaZnZ8WA'
@@ -306,7 +306,7 @@ def get_text_message(message):
                    'Дивидендная стратегия')
         bot.send_message(message.from_user.id, 'Таблица обновлена : \n https://docs.google.com/spreadsheets/d/1p2_FlOkFGkBzDpOYv4Hi2gChFvnbNAZQGHmnc_kDkkk/')
     elif message.text == 'Bnd':
-        bot.send_message(message.from_user.id, 'dividend stocks counting started')
+        bot.send_message(message.from_user.id, 'Corporate bonds counting started')
         final_b = bonds()
         load_df_to_gsheets(final_b,
                            "1p2_FlOkFGkBzDpOYv4Hi2gChFvnbNAZQGHmnc_kDkkk",

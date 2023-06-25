@@ -5,4 +5,3 @@ flask
 gspread
 gspread_dataframe
 lxml
-html
