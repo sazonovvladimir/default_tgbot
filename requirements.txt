@@ -4,4 +4,5 @@ numpy
 flask
 gspread
 gspread_dataframe
-plotly
+lxml
+html

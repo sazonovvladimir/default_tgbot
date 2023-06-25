@@ -8,6 +8,7 @@ import datetime as dt
 import numpy as np
 from background import keep_alive
 import logging
+import html
 
 logging.basicConfig(level=logging.INFO)
 TOKEN = '5966527940:AAF1n1_Yw1p3bLjAvEFvNVdPquTWaZnZ8WA'
@@ -15,9 +16,6 @@ bot = TeleBot(TOKEN)
 
 
 def load_df_to_gsheets(data_frame, doc, title, force=False, formats=[], index=False):
-    # https://gspread.readthedocs.io/en/latest/user-guide.html
-    # gc = gspread.service_account(filename=r"C:\Users\vladimir.sazonov\Projects\gifted-decker-309314-b37757f54ad8.json")
-    # sh = gc.open_by_key(doc)
     data = {
         "type": "service_account",
         "project_id": "gifted-decker-309314",
@@ -32,7 +30,6 @@ def load_df_to_gsheets(data_frame, doc, title, force=False, formats=[], index=Fa
     }
     gc = gspread.service_account_from_dict(data)
     sh = gc.open_by_key(doc)
-    # create if not exists
     counter = 0
     done = True
     while True:
@@ -100,39 +97,33 @@ def stocks():
     tickers = list(set(listing[listing['SUPERTYPE'].isin(['Акции'])]['TRADE_CODE'].values))
 
     lists = []
+    yahoo = []
+    last_price = []
     for ticker in tickers:
         print(ticker)
-        if requests.get('https://www.dohod.ru/ik/analytics/dividend/{}'.format(ticker), headers={
-                          "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.75 Safari/537.36",
-                          "X-Requested-With": "XMLHttpRequest"
-                        }).status_code < 400:
-            time.sleep(1)
+        if requests.get('https://www.dohod.ru/ik/analytics/dividend/{}'.format(ticker)).status_code < 400:
             a = pd.read_html('https://www.dohod.ru/ik/analytics/dividend/{}'.format(ticker))
             a = a[1]
             a['ticker'] = ticker
             lists.append(a)
             time.sleep(1)
+            print('downloading ', ticker)
+            data = loader_iss_full_data(ticker)
+            if data.empty == False:
+                data['close'] = data['close'].astype(float)
+                data['ticker'] = ticker
+                data = data.reset_index()
+                last_price.append(data.sort_values('end').groupby('ticker').tail(1)[['ticker', 'close']].rename(
+                    columns={'close': 'Цена, посл'}))
+                data['year_avg'] = data.groupby(data['begin'].dt.year)['close'].transform('median')
+                data['year'] = data['begin'].dt.year
+                data = data[['ticker', 'year', 'year_avg']].drop_duplicates()
+                yahoo.append(data)
+
     dividends = pd.concat(lists, sort=False)
     dividends = dividends[dividends['Год'] != 'след 12m. (прогноз)']
     dividends['Год'] = dividends['Год'].astype(int)
 
-    yahoo = []
-    last_price = []
-    for ticker in list(dividends['ticker'].unique()):
-        print('downloading ', ticker)
-        data = loader_iss_full_data(ticker)
-        time.sleep(2)
-        if data.empty == False:
-            for col in ['open', 'close', 'high', 'low']:
-                data[col] = data[col].astype(float)
-            data['ticker'] = ticker
-            data = data.reset_index()
-            last_price.append(data.sort_values('end').groupby('ticker').tail(1)[['ticker', 'close']].rename(
-                columns={'close': 'Цена, посл'}))
-            data['year_avg'] = data.groupby(data['begin'].dt.year)['close'].transform('median')
-            data['year'] = data['begin'].dt.year
-            data = data[['ticker', 'year', 'year_avg']].drop_duplicates()
-            yahoo.append(data)
     df_yahoo = pd.concat(yahoo, sort=False, ignore_index=True)
     df_last_price = pd.concat(last_price, sort=False, ignore_index=True)
 
@@ -200,27 +191,133 @@ def stocks():
     filtered = df_info[(df_info['current_doh'] > 0.06) &
             (df_info['avg_div_doh'] > 0.06) &
             (df_info['count_div_pays'].isin([7, 6, 5]))].sort_values(['delta'], ascending=[True])
+    filtered['updated'] = pd.to_datetime(dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     return filtered
+
+def bonds():
+    full = []
+    for page in ['page' + str(i) for i in range(1, 20)]:
+        bonds_ = \
+        pd.read_html(requests.get('https://smart-lab.ru/q/bonds/order_by_val_to_day/desc/{}/'.format(page), headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.75 Safari/537.36",
+            "X-Requested-With": "XMLHttpRequest"
+        }).text)[0]
+        if not bonds_.empty:
+            full.append(bonds_)
+    all_bonds = pd.concat(full)
+
+    codes_mapping = []
+    for page in ['page' + str(i) for i in range(1, 20)]:
+        corp_html = requests.get('https://smart-lab.ru/q/bonds/order_by_val_to_day/desc/{}/'.format(page))
+        tree = html.fromstring(corp_html.text)
+        bonds = list(tree.xpath("//table[contains(@class,'trades-table')]//a[contains(@href,'q/bonds')]"))
+        bonds_with_codes = []
+        for b in bonds:
+            bonds_with_codes.append({
+                'bond': b.text,
+                'href': b.get('href'),
+                'isin': b.get('href').split('/')[3],
+            })
+        bonds_with_codes = pd.DataFrame.from_records(bonds_with_codes)
+        codes_mapping.append(bonds_with_codes)
+    bonds_with_codes_full = pd.concat(codes_mapping)
+
+
+    listing = pd.read_csv('ListingSecurityList.csv', encoding='windows-1251')
+    # listing['TRADE_CODE'] = listing['TRADE_CODE'].str.lower()
+    listing = listing[['LIST_SECTION', 'ISIN', 'REGISTRY_NUMBER', 'EMITENT_FULL_NAME']]
+
+    all_bonds = all_bonds \
+        .merge(bonds_with_codes_full,
+               how='left',
+               left_on='Имя',
+               right_on='bond') \
+        .merge(listing,
+               left_on='isin',
+               right_on='ISIN',
+               how='left')
+
+    all_bonds['Цена'] = all_bonds['Цена'].astype(str)
+    all_bonds = all_bonds[~all_bonds['Цена'].str.contains('АйДиЭф')]
+    for col in ['Цена', 'Купон, руб', 'Лет допогаш.', 'Частота,раз в год', 'НКД, руб', 'Дюр-я, лет', 'Объем, млн руб']:
+        all_bonds[col] = all_bonds[col].astype(float)
+    all_bonds['calculated_doh'] = (((all_bonds['Купон, руб'] + (100 - all_bonds['Цена']) / all_bonds[
+        'Лет допогаш.']) / 2) / ((100 + all_bonds['Цена']) / 2)) * 100
+    all_bonds['calculated_doh_2'] = round(((1000 - all_bonds['Цена'] * 10 + (
+                all_bonds['Лет допогаш.'] * all_bonds['Частота,раз в год'] * all_bonds['Купон, руб'] - all_bonds[
+            'НКД, руб'])) / (all_bonds['Цена'] * 10) * (1 / all_bonds['Лет допогаш.'])) * 100, 2)
+    for col in ['Доходн', 'Год.куп.дох.']:
+        all_bonds[col] = all_bonds[col].str.replace('%', '').str.replace(' ', '').astype(float)
+    all_bonds['Объем, млн руб'] = all_bonds['Объем, млн руб'].fillna(0)
+    all_bonds = all_bonds[all_bonds['Дата купона'] != '0000-00-00']
+    all_bonds['Дата купона'] = pd.to_datetime(all_bonds['Дата купона'], errors='ignore')
+    all_bonds['date_coupon'] = all_bonds.apply(lambda x: np.floor(
+        (pd.to_datetime(x['Дата купона']) - pd.to_datetime(dt.datetime.now())) / np.timedelta64(1, 'D')), axis=1)
+
+    all_bonds = all_bonds[(all_bonds['Лет допогаш.'] <= 3)
+                          & (all_bonds['Доходн'] <= 20)
+                          & (all_bonds['Год.куп.дох.'] <= 13)
+                          & (all_bonds['Доходн'] > 7)
+                          & (all_bonds['Дюр-я, лет'] <= 3)][
+        ['Имя', 'Размещение', 'Погашение', 'Лет допогаш.', 'Дюр-я, лет',
+         'Оферта', 'Доходн', 'calculated_doh_2', 'Год.куп.дох.', 'Цена',
+         'Объем, млн руб', 'Купон, руб', 'Частота,раз в год', 'НКД, руб',
+         'ISIN', 'LIST_SECTION', 'REGISTRY_NUMBER', 'EMITENT_FULL_NAME',
+         'Дата купона', 'date_coupon']].drop_duplicates() \
+        .sort_values(['Доходн', 'calculated_doh_2',
+                      'Цена', 'Объем, млн руб'],
+                     ascending=[False, False, True, False]) \
+        .rename(columns={'Доходн': 'Доходность к погашению',
+                         'calculated_doh_2': 'Доходность',
+                         "LIST_SECTION": "Уровень листинга",
+                         "EMITENT_FULL_NAME": "Эмитент",
+                         "REGISTRY_NUMBER": "Регистрационный номер"})
+    all_bonds['Уровень листинга'] = all_bonds['Уровень листинга'].map({'Первый уровень': 1,
+                                                                       "Второй уровень": 2,
+                                                                       "Третий уровень": 3}).fillna(
+        all_bonds['Уровень листинга'])
+    all_bonds['updated'] = pd.to_datetime(dt.datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
+
+    filtered_bonds = all_bonds[
+        (all_bonds['Уровень листинга'].isin([1, 2])) &
+        (all_bonds['Лет допогаш.'] <= 3)
+        & (all_bonds['Доходность к погашению'] <= 13)
+        & (all_bonds['Доходность'] > 0)
+        & (all_bonds['Год.куп.дох.'] <= 13)
+        & (all_bonds['Доходность к погашению'] > 4)
+        & (all_bonds['Дюр-я, лет'] <= 3)] \
+        .sort_values(['Доходность к погашению', 'Доходность', 'Цена', 'Объем, млн руб'],
+                     ascending=[False, False, True, False]) \
+        .reset_index(drop=True)
+
+    return filtered_bonds
 
 @bot.message_handler(commands=["start"])
 def start(message):
-    bot.send_message(message.chat.id, 'Hello!')
+    bot.send_message(message.chat.id, 'Bot is started.\n "Div" - dividend stocks\n "Bnd" - actual corporate bonds')
 
 @bot.message_handler(content_types=['text'])
 def get_text_message(message):
-    if message.text == 'dividend':
+    if message.text == 'Div':
         bot.send_message(message.from_user.id, 'dividend stocks counting started')
         final = stocks()
         load_df_to_gsheets(final,
                    "1p2_FlOkFGkBzDpOYv4Hi2gChFvnbNAZQGHmnc_kDkkk",
                    'Дивидендная стратегия')
-        bot.send_message(message.from_user.id, 'Таблица обновлена')
-        bot.send_message(message.from_user.id, 'https://docs.google.com/spreadsheets/d/1p2_FlOkFGkBzDpOYv4Hi2gChFvnbNAZQGHmnc_kDkkk/')
+        bot.send_message(message.from_user.id, 'Таблица обновлена : \n https://docs.google.com/spreadsheets/d/1p2_FlOkFGkBzDpOYv4Hi2gChFvnbNAZQGHmnc_kDkkk/')
+    elif message.text == 'Bnd':
+        bot.send_message(message.from_user.id, 'dividend stocks counting started')
+        final_b = bonds()
+        load_df_to_gsheets(final_b,
+                           "1p2_FlOkFGkBzDpOYv4Hi2gChFvnbNAZQGHmnc_kDkkk",
+                           'Корпоративные облигации')
+        bot.send_message(message.from_user.id,
+                         'Таблица обновлена : \n https://docs.google.com/spreadsheets/d/1p2_FlOkFGkBzDpOYv4Hi2gChFvnbNAZQGHmnc_kDkkk/')
     else:
         bot.send_message(message.from_user.id, 'unknown command')
 
-# bot.polling(none_stop=True, interval=0)
 keep_alive()
+
 if __name__ == '__main__':
     print('Start bot')
     bot.polling(none_stop=True, interval=0)
