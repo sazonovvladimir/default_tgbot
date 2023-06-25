@@ -244,15 +244,15 @@ def bonds():
 
     all_bonds['Цена'] = all_bonds['Цена'].astype(str)
     all_bonds = all_bonds[~all_bonds['Цена'].str.contains('АйДиЭф')]
-    for col in list(set(['Цена', 'Купон, руб', 'Лет допогаш.', 'Частота,раз в год', 'НКД, руб', 'Дюр-я, лет', 'Объем, млн руб']).intersection(set(list(all_bonds.columns)))):
+    for col in list(set(['Цена', 'Купон, руб', 'Лет до погаш.', 'Частота, раз в год', 'НКД, руб', 'Дюр-я, лет', 'Объем, млн руб']).intersection(set(list(all_bonds.columns)))):
         all_bonds[col] = all_bonds[col].astype(float)
     print(list(all_bonds.columns))
     all_bonds['calculated_doh'] = (((all_bonds['Купон, руб'] + (100 - all_bonds['Цена']) / all_bonds[
-        'Лет допогаш.']) / 2) / ((100 + all_bonds['Цена']) / 2)) * 100
+        'Лет до погаш.']) / 2) / ((100 + all_bonds['Цена']) / 2)) * 100
     all_bonds['calculated_doh_2'] = round(((1000 - all_bonds['Цена'] * 10 + (
-                all_bonds['Лет допогаш.'] * all_bonds['Частота,раз в год'] * all_bonds['Купон, руб'] - all_bonds[
-            'НКД, руб'])) / (all_bonds['Цена'] * 10) * (1 / all_bonds['Лет допогаш.'])) * 100, 2)
-    for col in list(set(['Доходн', 'Год.куп.дох.']).intersection(set(list(all_bonds.columns)))):
+                all_bonds['Лет до погаш.'] * all_bonds['Частота, раз в год'] * all_bonds['Купон, руб'] - all_bonds[
+            'НКД, руб'])) / (all_bonds['Цена'] * 10) * (1 / all_bonds['Лет до погаш.'])) * 100, 2)
+    for col in list(set(['Доходн','Год.куп. дох.']).intersection(set(list(all_bonds.columns)))):
         all_bonds[col] = all_bonds[col].str.replace('%', '').str.replace(' ', '').astype(float)
     all_bonds['Объем, млн руб'] = all_bonds['Объем, млн руб'].fillna(0)
     all_bonds = all_bonds[all_bonds['Дата купона'] != '0000-00-00']
@@ -260,14 +260,14 @@ def bonds():
     all_bonds['date_coupon'] = all_bonds.apply(lambda x: np.floor(
         (pd.to_datetime(x['Дата купона']) - pd.to_datetime(dt.datetime.now())) / np.timedelta64(1, 'D')), axis=1)
 
-    all_bonds = all_bonds[(all_bonds['Лет допогаш.'] <= 3)
+    all_bonds = all_bonds[(all_bonds['Лет до погаш.'] <= 3)
                           & (all_bonds['Доходн'] <= 20)
-                          & (all_bonds['Год.куп.дох.'] <= 13)
+                          & (all_bonds['Год.куп. дох.'] <= 13)
                           & (all_bonds['Доходн'] > 7)
                           & (all_bonds['Дюр-я, лет'] <= 3)][
-        ['Имя', 'Размещение', 'Погашение', 'Лет допогаш.', 'Дюр-я, лет',
-         'Оферта', 'Доходн', 'calculated_doh_2', 'Год.куп.дох.', 'Цена',
-         'Объем, млн руб', 'Купон, руб', 'Частота,раз в год', 'НКД, руб',
+        ['Имя', 'Размещение', 'Погашение', 'Лет до погаш.', 'Дюр-я, лет',
+         'Оферта', 'Доходн', 'calculated_doh_2', 'Год.куп. дох.', 'Цена',
+         'Объем, млн руб', 'Купон, руб', 'Частота, раз в год', 'НКД, руб',
          'ISIN', 'LIST_SECTION', 'REGISTRY_NUMBER', 'EMITENT_FULL_NAME',
          'Дата купона', 'date_coupon']].drop_duplicates() \
         .sort_values(['Доходн', 'calculated_doh_2',
@@ -286,10 +286,10 @@ def bonds():
 
     filtered_bonds = all_bonds[
         (all_bonds['Уровень листинга'].isin([1, 2])) &
-        (all_bonds['Лет допогаш.'] <= 3)
+        (all_bonds['Лет до погаш.'] <= 3)
         & (all_bonds['Доходность к погашению'] <= 13)
         & (all_bonds['Доходность'] > 0)
-        & (all_bonds['Год.куп.дох.'] <= 13)
+        & (all_bonds['Год.куп. дох.'] <= 13)
         & (all_bonds['Доходность к погашению'] > 4)
         & (all_bonds['Дюр-я, лет'] <= 3)] \
         .sort_values(['Доходность к погашению', 'Доходность', 'Цена', 'Объем, млн руб'],
