@@ -246,6 +246,7 @@ def bonds():
     all_bonds = all_bonds[~all_bonds['Цена'].str.contains('АйДиЭф')]
     for col in list(set(['Цена', 'Купон, руб', 'Лет допогаш.', 'Частота,раз в год', 'НКД, руб', 'Дюр-я, лет', 'Объем, млн руб']).intersection(set(list(all_bonds.columns)))):
         all_bonds[col] = all_bonds[col].astype(float)
+    print(list(all_bonds.columns))
     all_bonds['calculated_doh'] = (((all_bonds['Купон, руб'] + (100 - all_bonds['Цена']) / all_bonds[
         'Лет допогаш.']) / 2) / ((100 + all_bonds['Цена']) / 2)) * 100
     all_bonds['calculated_doh_2'] = round(((1000 - all_bonds['Цена'] * 10 + (
