@@ -94,19 +94,23 @@ def loader_iss_full_data(ticker):
 def stocks():
     listing = pd.read_csv('ListingSecurityList.csv', encoding='windows-1251')
     listing['TRADE_CODE'] = listing['TRADE_CODE'].str.lower()
-    tickers = list(set(listing[listing['SUPERTYPE'].isin(['Акции'])]['TRADE_CODE'].values))
+    tickers = list(set(listing[listing['SUPERTYPE'].isin(['Акции']) &
+                               (listing['TRADE_CODE'].notna())]['TRADE_CODE'].values) \
+                   .difference(set(listing[(listing['SUPERTYPE'].isin(['Акции'])) &
+                                           (listing['TRADE_CODE'].str.contains('-rm'))]['TRADE_CODE'].values))
+                   )
 
     lists = []
     yahoo = []
     last_price = []
     for ticker in tickers:
+        time.sleep(1)
         print(ticker)
         if requests.get('https://www.dohod.ru/ik/analytics/dividend/{}'.format(ticker)).status_code < 400:
             a = pd.read_html('https://www.dohod.ru/ik/analytics/dividend/{}'.format(ticker))
             a = a[1]
             a['ticker'] = ticker
             lists.append(a)
-            time.sleep(1)
             print('downloading ', ticker)
             data = loader_iss_full_data(ticker)
             if data.empty == False:
@@ -195,6 +199,7 @@ def stocks():
     return filtered
 
 def bonds():
+    print('bonds start')
     full = []
     for page in ['page' + str(i) for i in range(1, 20)]:
         bonds_ = \
@@ -239,14 +244,14 @@ def bonds():
 
     all_bonds['Цена'] = all_bonds['Цена'].astype(str)
     all_bonds = all_bonds[~all_bonds['Цена'].str.contains('АйДиЭф')]
-    for col in ['Цена', 'Купон, руб', 'Лет допогаш.', 'Частота,раз в год', 'НКД, руб', 'Дюр-я, лет', 'Объем, млн руб']:
+    for col in list(set(['Цена', 'Купон, руб', 'Лет допогаш.', 'Частота,раз в год', 'НКД, руб', 'Дюр-я, лет', 'Объем, млн руб']).intersection(set(list(all_bonds.columns)))):
         all_bonds[col] = all_bonds[col].astype(float)
     all_bonds['calculated_doh'] = (((all_bonds['Купон, руб'] + (100 - all_bonds['Цена']) / all_bonds[
         'Лет допогаш.']) / 2) / ((100 + all_bonds['Цена']) / 2)) * 100
     all_bonds['calculated_doh_2'] = round(((1000 - all_bonds['Цена'] * 10 + (
                 all_bonds['Лет допогаш.'] * all_bonds['Частота,раз в год'] * all_bonds['Купон, руб'] - all_bonds[
             'НКД, руб'])) / (all_bonds['Цена'] * 10) * (1 / all_bonds['Лет допогаш.'])) * 100, 2)
-    for col in ['Доходн', 'Год.куп.дох.']:
+    for col in list(set(['Доходн', 'Год.куп.дох.']).intersection(set(list(all_bonds.columns)))):
         all_bonds[col] = all_bonds[col].str.replace('%', '').str.replace(' ', '').astype(float)
     all_bonds['Объем, млн руб'] = all_bonds['Объем, млн руб'].fillna(0)
     all_bonds = all_bonds[all_bonds['Дата купона'] != '0000-00-00']
