@@ -198,105 +198,125 @@ def stocks():
     filtered['updated'] = pd.to_datetime(dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     return filtered
 
-def bonds():
-    print('bonds start')
-    full = []
-    for page in ['page' + str(i) for i in range(1, 20)]:
-        bonds_ = \
-        pd.read_html(requests.get('https://smart-lab.ru/q/bonds/order_by_val_to_day/desc/{}/'.format(page), headers={
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.75 Safari/537.36",
-            "X-Requested-With": "XMLHttpRequest"
-        }).text)[0]
-        if not bonds_.empty:
-            full.append(bonds_)
-    all_bonds = pd.concat(full)
 
-    codes_mapping = []
-    for page in ['page' + str(i) for i in range(1, 20)]:
-        corp_html = requests.get('https://smart-lab.ru/q/bonds/order_by_val_to_day/desc/{}/'.format(page))
-        tree = html.fromstring(corp_html.text)
-        bonds = list(tree.xpath("//table[contains(@class,'trades-table')]//a[contains(@href,'q/bonds')]"))
-        bonds_with_codes = []
-        for b in bonds:
-            bonds_with_codes.append({
-                'bond': b.text,
-                'href': b.get('href'),
-                'isin': b.get('href').split('/')[3],
-            })
-        bonds_with_codes = pd.DataFrame.from_records(bonds_with_codes)
-        codes_mapping.append(bonds_with_codes)
-    bonds_with_codes_full = pd.concat(codes_mapping)
-
-
+def bonds(corp=True):
     listing = pd.read_csv('ListingSecurityList.csv', encoding='windows-1251')
-    # listing['TRADE_CODE'] = listing['TRADE_CODE'].str.lower()
-    listing = listing[['LIST_SECTION', 'ISIN', 'REGISTRY_NUMBER', 'EMITENT_FULL_NAME']]
-
-    all_bonds = all_bonds \
-        .merge(bonds_with_codes_full,
-               how='left',
-               left_on='Имя',
-               right_on='bond') \
-        .merge(listing,
-               left_on='isin',
-               right_on='ISIN',
+    bonds_df = pd.DataFrame(
+        requests.get('https://iss.moex.com/iss/engines/stock/markets/bonds/securities.json').json()['securities'][
+            'data'],
+        columns=
+        requests.get('https://iss.moex.com/iss/engines/stock/markets/bonds/securities.json').json()['securities'][
+            'columns'])[['SHORTNAME',
+                         'ISIN',
+                         'MATDATE',
+                         'OFFERDATE',
+                         'NEXTCOUPON',
+                         'COUPONVALUE',
+                         'ACCRUEDINT',
+                         'FACEVALUE',
+                         'ISSUESIZE',
+                         'LISTLEVEL',
+                         'STATUS',
+                         'COUPONPERIOD',
+                         'CURRENCYID',
+                         'SECNAME']] \
+        .merge(pd.DataFrame(
+        requests.get('https://iss.moex.com/iss/engines/stock/markets/bonds/securities.json').json()['marketdata'][
+            'data'],
+        columns=
+        requests.get('https://iss.moex.com/iss/engines/stock/markets/bonds/securities.json').json()['marketdata'][
+            'columns'])[['SECID',
+                         'LAST',
+                         'MARKETPRICETODAY',
+                         'YIELD',
+                         'CLOSEYIELD',
+                         'DURATION',
+                         'VALTODAY_RUR',
+                         'VOLTODAY']] \
+               .rename(columns={'SECID': 'ISIN'}),
+               on='ISIN',
+               how='left') \
+        .merge(listing[(listing['SUPERTYPE'] == 'Облигации') &
+                       (listing['ISIN'].notna())][['ISIN',
+                                                   'INSTRUMENT_TYPE']],
+               on='ISIN',
                how='left')
+    for col in ['MATDATE', 'OFFERDATE', 'NEXTCOUPON']:
+        bonds_df[col] = pd.to_datetime(bonds_df[col].replace('0000-00-00', np.nan, regex=True))
+    bonds_df['ACCRUEDINT'] = round(bonds_df['ACCRUEDINT'], 2).fillna(0)
+    bonds_df['YEARS_TO_CLOSE'] = round(
+        (bonds_df['MATDATE'] - pd.to_datetime(dt.datetime.now().date())) / np.timedelta64(1, 'Y'), 1).fillna(0)
+    bonds_df['DAYS_TO_COUPON'] = round(
+        (bonds_df['NEXTCOUPON'] - pd.to_datetime(dt.datetime.now().date())) / np.timedelta64(1, 'D'), 0).fillna(
+        0).astype(int)
+    bonds_df['CNT_COUPON_IN_YEAR'] = round(365 / bonds_df['COUPONPERIOD'], 0).replace(np.inf, np.nan).fillna(0).astype(
+        int)
+    bonds_df['DURATION_YEARS'] = round(bonds_df['DURATION'] / 365, 2)
+    bonds_df['LAST'] = round(bonds_df['LAST'].fillna(bonds_df['MARKETPRICETODAY']), 2)
+    bonds_df['CALCULATED_YIELD'] = round(((1000 - bonds_df['LAST'] * 10 + (
+                bonds_df['YEARS_TO_CLOSE'] * bonds_df['CNT_COUPON_IN_YEAR'] * bonds_df['COUPONVALUE'] - bonds_df[
+            'ACCRUEDINT'])) / (bonds_df['LAST'] * 10) * (1 / bonds_df['YEARS_TO_CLOSE'])) * 100, 2)
+    bonds_df = bonds_df[(bonds_df['MATDATE'].notna()) &
+                        (bonds_df['LAST'].notna()) &
+                        (bonds_df['DURATION'].notna()) &
+                        (bonds_df['INSTRUMENT_TYPE'].notna()) &
+                        (bonds_df['CURRENCYID'] == 'SUR') &
+                        (bonds_df['INSTRUMENT_TYPE'].isin(['Облигация биржевая',
+                                                           'Облигация корпоративная',
+                                                           'Облигация субфедеральная',
+                                                           'Облигация федерального займа']))] \
+        .sort_values(['ISIN', 'YIELD']) \
+        .groupby('ISIN') \
+        .tail(1)[
+        ['SHORTNAME', 'SECNAME', 'ISIN', 'MATDATE', 'YEARS_TO_CLOSE', 'OFFERDATE', 'NEXTCOUPON', 'LAST', 'YIELD',
+         'CALCULATED_YIELD', 'DURATION_YEARS', 'VALTODAY_RUR', 'VOLTODAY',
+         'COUPONVALUE', 'ACCRUEDINT', 'ISSUESIZE', 'DAYS_TO_COUPON', 'LISTLEVEL',
+         'STATUS', 'CNT_COUPON_IN_YEAR', 'INSTRUMENT_TYPE']].rename(columns={'SHORTNAME': 'Имя',
+                                                                             'SECNAME': 'Имя полное',
+                                                                             'MATDATE': 'Погашение',
+                                                                             'OFFERDATE': 'Оферта',
+                                                                             'NEXTCOUPON': 'Дата купона',
+                                                                             'COUPONVALUE': 'Купон, руб',
+                                                                             'ACCRUEDINT': 'НКД, руб',
+                                                                             'ISSUESIZE': 'Объем выпуска, штук',
+                                                                             'LISTLEVEL': 'Уровень листинга',
+                                                                             'STATUS': 'Статус',
+                                                                             'LAST': 'Цена',
+                                                                             'YIELD': 'Доходность по последней сделке,%',
+                                                                             'INSTRUMENT_TYPE': 'Тип облигации',
+                                                                             'YEARS_TO_CLOSE': 'Лет до погаш.',
+                                                                             'DAYS_TO_COUPON': 'Дней до купона',
+                                                                             'CNT_COUPON_IN_YEAR': 'Частота, раз в год',
+                                                                             'DURATION_YEARS': 'Дюрация, лет',
+                                                                             'CALCULATED_YIELD': 'Доходность к погашению,%',
+                                                                             'VOLTODAY': 'Объем в бумагах, шт',
+                                                                             'VALTODAY_RUR': 'Объем в валюте'})
 
-    all_bonds['Цена'] = all_bonds['Цена'].astype(str)
-    all_bonds = all_bonds[~all_bonds['Цена'].str.contains('АйДиЭф')]
-    for col in list(set(['Цена', 'Купон, руб', 'Лет до погаш.', 'Частота, раз в год', 'НКД, руб', 'Дюр-я, лет', 'Объем, млн руб']).intersection(set(list(all_bonds.columns)))):
-        all_bonds[col] = all_bonds[col].astype(float)
-    print(list(all_bonds.columns))
-    all_bonds['calculated_doh'] = (((all_bonds['Купон, руб'] + (100 - all_bonds['Цена']) / all_bonds[
-        'Лет до погаш.']) / 2) / ((100 + all_bonds['Цена']) / 2)) * 100
-    all_bonds['calculated_doh_2'] = round(((1000 - all_bonds['Цена'] * 10 + (
-                all_bonds['Лет до погаш.'] * all_bonds['Частота, раз в год'] * all_bonds['Купон, руб'] - all_bonds[
-            'НКД, руб'])) / (all_bonds['Цена'] * 10) * (1 / all_bonds['Лет до погаш.'])) * 100, 2)
-    for col in list(set(['Доходн','Год.куп. дох.']).intersection(set(list(all_bonds.columns)))):
-        all_bonds[col] = all_bonds[col].str.replace('%', '').str.replace(' ', '').astype(float)
-    all_bonds['Объем, млн руб'] = all_bonds['Объем, млн руб'].fillna(0)
-    all_bonds = all_bonds[all_bonds['Дата купона'] != '0000-00-00']
-    all_bonds['Дата купона'] = pd.to_datetime(all_bonds['Дата купона'], errors='ignore')
-    all_bonds['date_coupon'] = all_bonds.apply(lambda x: np.floor(
-        (pd.to_datetime(x['Дата купона']) - pd.to_datetime(dt.datetime.now())) / np.timedelta64(1, 'D')), axis=1)
-
-    all_bonds = all_bonds[(all_bonds['Лет до погаш.'] <= 3)
-                          & (all_bonds['Доходн'] <= 20)
-                          & (all_bonds['Год.куп. дох.'] <= 13)
-                          & (all_bonds['Доходн'] > 7)
-                          & (all_bonds['Дюр-я, лет'] <= 3)][
-        ['Имя', 'Размещение', 'Погашение', 'Лет до погаш.', 'Дюр-я, лет',
-         'Оферта', 'Доходн', 'calculated_doh_2', 'Год.куп. дох.', 'Цена',
-         'Объем, млн руб', 'Купон, руб', 'Частота, раз в год', 'НКД, руб',
-         'ISIN', 'LIST_SECTION', 'REGISTRY_NUMBER', 'EMITENT_FULL_NAME',
-         'Дата купона', 'date_coupon']].drop_duplicates() \
-        .sort_values(['Доходн', 'calculated_doh_2',
-                      'Цена', 'Объем, млн руб'],
-                     ascending=[False, False, True, False]) \
-        .rename(columns={'Доходн': 'Доходность к погашению',
-                         'calculated_doh_2': 'Доходность',
-                         "LIST_SECTION": "Уровень листинга",
-                         "EMITENT_FULL_NAME": "Эмитент",
-                         "REGISTRY_NUMBER": "Регистрационный номер"})
-    all_bonds['Уровень листинга'] = all_bonds['Уровень листинга'].map({'Первый уровень': 1,
-                                                                       "Второй уровень": 2,
-                                                                       "Третий уровень": 3}).fillna(
-        all_bonds['Уровень листинга'])
-    all_bonds['updated'] = pd.to_datetime(dt.datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
-
-    filtered_bonds = all_bonds[
-        (all_bonds['Уровень листинга'].isin([1, 2])) &
-        (all_bonds['Лет до погаш.'] <= 3)
-        & (all_bonds['Доходность к погашению'] <= 13)
-        & (all_bonds['Доходность'] > 0)
-        & (all_bonds['Год.куп. дох.'] <= 13)
-        & (all_bonds['Доходность к погашению'] > 4)
-        & (all_bonds['Дюр-я, лет'] <= 3)] \
-        .sort_values(['Доходность к погашению', 'Доходность', 'Цена', 'Объем, млн руб'],
-                     ascending=[False, False, True, False]) \
-        .reset_index(drop=True)
-
-    return filtered_bonds
+    if corp:
+        filtered_bonds_df = bonds_df[(bonds_df['Лет до погаш.'] <= 3)
+                                          & (bonds_df['Доходность к погашению,%'] <= 20)
+                                          & (bonds_df['Доходность к погашению,%'] > 7)
+                                          & (bonds_df['Дюрация, лет'] <= 3)
+                                          & (bonds_df['Уровень листинга'].isin([1, 2]))
+                                          & (bonds_df['Объем в бумагах, шт'] > 0)
+                                          & (bonds_df['Тип облигации'].isin(
+            ['Облигация биржевая', 'Облигация корпоративная']))] \
+            .sort_values(['Доходность к погашению,%', 'Доходность по последней сделке,%', 'Цена', 'Объем в валюте'],
+                         ascending=[False, False, True, False]) \
+            .reset_index(drop=True)
+    else:
+        filtered_bonds_df = bonds_df[(bonds_df['Лет до погаш.'] <= 3)
+                                         & (bonds_df['Доходность к погашению,%'] <= 20)
+                                         & (bonds_df['Доходность к погашению,%'] > 7)
+                                         & (bonds_df['Дюрация, лет'] <= 3)
+                                         & (bonds_df['Уровень листинга'].isin([1, 2]))
+                                         & (bonds_df['Объем в бумагах, шт'] > 0)
+                                         & (bonds_df['Тип облигации'].isin(
+            ['Облигация субфедеральная', 'Облигация федерального займа']))] \
+            .sort_values(['Доходность к погашению,%', 'Доходность по последней сделке,%', 'Цена', 'Объем в валюте'],
+                         ascending=[False, False, True, False]) \
+            .reset_index(drop=True)
+    return filtered_bonds_df
 
 @bot.message_handler(commands=["start"])
 def start(message):
@@ -305,7 +325,7 @@ def start(message):
 @bot.message_handler(content_types=['text'])
 def get_text_message(message):
     if message.text == 'Div':
-        bot.send_message(message.from_user.id, 'dividend stocks counting started')
+        bot.send_message(message.from_user.id, 'Dividend stocks counting started')
         final = stocks()
         load_df_to_gsheets(final,
                    "1p2_FlOkFGkBzDpOYv4Hi2gChFvnbNAZQGHmnc_kDkkk",
@@ -317,6 +337,14 @@ def get_text_message(message):
         load_df_to_gsheets(final_b,
                            "1p2_FlOkFGkBzDpOYv4Hi2gChFvnbNAZQGHmnc_kDkkk",
                            'Корпоративные облигации')
+        bot.send_message(message.from_user.id,
+                         'Таблица обновлена : \n https://docs.google.com/spreadsheets/d/1p2_FlOkFGkBzDpOYv4Hi2gChFvnbNAZQGHmnc_kDkkk/')
+    elif message.text == 'Fed':
+        bot.send_message(message.from_user.id, 'Subfed/Fed bonds counting started')
+        final_bf = bonds(False)
+        load_df_to_gsheets(final_bf,
+                           "1p2_FlOkFGkBzDpOYv4Hi2gChFvnbNAZQGHmnc_kDkkk",
+                           'Государственные облигации')
         bot.send_message(message.from_user.id,
                          'Таблица обновлена : \n https://docs.google.com/spreadsheets/d/1p2_FlOkFGkBzDpOYv4Hi2gChFvnbNAZQGHmnc_kDkkk/')
     else:
