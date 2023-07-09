@@ -242,12 +242,12 @@ def bonds(corp=True):
                on='ISIN',
                how='left')
     for col in ['MATDATE', 'OFFERDATE', 'NEXTCOUPON']:
-        bonds_df[col] = pd.to_datetime(bonds_df[col].replace('0000-00-00', np.nan, regex=True))
+        bonds_df[col] = pd.to_datetime(bonds_df[col].replace('0000-00-00', np.nan, regex=True)).dt.strftime('%Y-%m-%d')
     bonds_df['ACCRUEDINT'] = round(bonds_df['ACCRUEDINT'], 2).fillna(0)
     bonds_df['YEARS_TO_CLOSE'] = round(
-        (bonds_df['MATDATE'] - pd.to_datetime(dt.datetime.now().date())) / np.timedelta64(1, 'Y'), 1).fillna(0)
+        (pd.to_datetime(bonds_df['MATDATE']) - pd.to_datetime(dt.datetime.now().date())) / np.timedelta64(1, 'Y'), 1).fillna(0)
     bonds_df['DAYS_TO_COUPON'] = round(
-        (bonds_df['NEXTCOUPON'] - pd.to_datetime(dt.datetime.now().date())) / np.timedelta64(1, 'D'), 0).fillna(
+        (pd.to_datetime(bonds_df['NEXTCOUPON']) - pd.to_datetime(dt.datetime.now().date())) / np.timedelta64(1, 'D'), 0).fillna(
         0).astype(int)
     bonds_df['CNT_COUPON_IN_YEAR'] = round(365 / bonds_df['COUPONPERIOD'], 0).replace(np.inf, np.nan).fillna(0).astype(
         int)
@@ -291,6 +291,7 @@ def bonds(corp=True):
                                                                              'CALCULATED_YIELD': 'Доходность к погашению,%',
                                                                              'VOLTODAY': 'Объем в бумагах, шт',
                                                                              'VALTODAY_RUR': 'Объем в валюте'})
+    bonds_df['updated'] = pd.to_datetime(dt.datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
 
     if corp:
         filtered_bonds_df = bonds_df[(bonds_df['Лет до погаш.'] <= 3)
@@ -303,7 +304,8 @@ def bonds(corp=True):
             ['Облигация биржевая', 'Облигация корпоративная']))] \
             .sort_values(['Доходность к погашению,%', 'Доходность по последней сделке,%', 'Цена', 'Объем в валюте'],
                          ascending=[False, False, True, False]) \
-            .reset_index(drop=True)
+            .reset_index(drop=True)\
+            .drop('Тип облигации', axis=1)
     else:
         filtered_bonds_df = bonds_df[(bonds_df['Лет до погаш.'] <= 3)
                                          & (bonds_df['Доходность к погашению,%'] <= 20)
@@ -315,7 +317,8 @@ def bonds(corp=True):
             ['Облигация субфедеральная', 'Облигация федерального займа']))] \
             .sort_values(['Доходность к погашению,%', 'Доходность по последней сделке,%', 'Цена', 'Объем в валюте'],
                          ascending=[False, False, True, False]) \
-            .reset_index(drop=True)
+            .reset_index(drop=True)\
+            .drop('Тип облигации', axis=1)
     return filtered_bonds_df
 
 @bot.message_handler(commands=["start"])
